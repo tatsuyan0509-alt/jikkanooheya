@@ -24,12 +24,31 @@
   .tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
   main { padding: 12px 16px 80px; max-width: 640px; margin: 0 auto; }
   .card { background: var(--card); border-radius: 16px; overflow: hidden; margin-bottom: 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    box-shadow: 0 1px 3px rgba(0,0,0,.08); scroll-margin-top: 150px; }
   .card img { display: block; width: 100%; max-height: 70vw; object-fit: contain; background: #eeeae2; }
   .body { padding: 12px 14px 14px; }
   .meta { color: var(--sub); font-size: 14px; }
-  .memo { font-size: 20px; font-weight: 600; margin: 4px 0 2px; }
-  .memo.none { color: var(--sub); font-weight: 400; font-size: 16px; }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* メモ */
+  .memoRow { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0 4px; }
+  .memo { flex: 1; font-size: 20px; font-weight: 600; word-break: break-all; }
+  .memoBtn { flex: none; font-size: 15px; padding: 6px 12px; border-radius: 20px;
+    border: 1px solid var(--line); background: #faf8f4; color: var(--ink); }
+  .memoAdd { display: block; width: 100%; text-align: left; font-size: 17px; padding: 12px 14px;
+    border-radius: 12px; border: 2px dashed #cfc8ba; background: #faf8f4; color: var(--sub); margin: 6px 0 4px; }
+  .editor { margin: 8px 0 4px; }
+  .editor textarea { width: 100%; font: inherit; font-size: 19px; padding: 12px; border-radius: 12px;
+    border: 2px solid var(--ink); min-height: 84px; resize: vertical; }
+  .hint { font-size: 14px; color: var(--sub); margin: 6px 0 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button { font-size: 15px; padding: 6px 12px; border-radius: 20px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink); }
+  .editBtns { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-top: 10px; }
+  .editBtns button { min-height: 50px; font-size: 18px; border-radius: 12px; font-weight: 600; }
+  .save { background: var(--ink); color: #fff; border: 2px solid var(--ink); }
+  .cancel { background: #fff; color: var(--ink); border: 2px solid var(--line); }
+
   .due { font-size: 14px; color: var(--sub); }
   .due.late { color: var(--toss); font-weight: 600; }
   .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
@@ -43,6 +62,16 @@
   .toss { color: var(--toss); } .toss.on { background: var(--toss); border-color: var(--toss); }
   .photo { color: var(--photo); } .photo.on { background: var(--photo); border-color: var(--photo); }
   .decided { margin-top: 8px; font-size: 14px; color: var(--sub); }
+
+  /* 削除 */
+  .delLink { display: block; margin: 14px auto 0; background: none; border: none; color: var(--sub);
+    font-size: 15px; text-decoration: underline; padding: 6px; }
+  .delBox { margin-top: 12px; padding: 12px; border-radius: 12px; background: #fbeeee; }
+  .delBox p { margin: 0 0 8px; font-size: 16px; color: var(--toss); font-weight: 600; }
+  .delBtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .delBtns button { min-height: 48px; font-size: 17px; border-radius: 12px; font-weight: 600; }
+  .delYes { background: var(--toss); color: #fff; border: 2px solid var(--toss); }
+
   .msg { text-align: center; color: var(--sub); padding: 40px 8px; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
     background: rgba(30,30,30,.92); color: #fff; padding: 10px 16px; border-radius: 10px;
@@ -64,18 +93,22 @@
 <div id="toast"></div>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<!-- ウェブアプリのURLは config.js に書きます（このファイルは触らなくてOK） -->
+<script src="config.js"></script>
 <script>
-// ===== ここだけ設定 =====
 const LIFF_ID = '2011850066-HXKrjld3';
-const GAS_URL = 'https://script.google.com/macros/s/AKfycby2Axf_B2NoTJ-SQ_2zfPSxTqQr1dMpmnqmO6ZSFR7Da1Z2sOkiktwM2nXR5jDQIhC1wg/exec';
-// =======================
+const GAS_URL = window.GAS_URL || '';
 
 const CHOICES = [
   { v: '残す', c: 'keep' }, { v: '譲る', c: 'give' },
   { v: '売る', c: 'sell' }, { v: '捨てる', c: 'toss' },
   { v: '写真で残す', c: 'photo', wide: true },
 ];
+// メモを書くときのヒント（押すと文字が入る）
+const CHIPS = ['賞状', 'アルバム', '服', 'おもちゃ', '本・教科書', '作品', '手紙', 'スポーツ用品', '小学校', '中学校', '高校'];
+
 let items = [], filter = 'todo', fid = '', me = '';
+let editing = null, draft = '', confirmDel = null;
 const recent = new Set(); // 「まだ決めていない」で、決めた直後のものは消さずに残す
 
 function esc(s) {
@@ -84,11 +117,13 @@ function esc(s) {
 function toast(t) {
   const el = document.getElementById('toast');
   el.textContent = t; el.classList.add('show');
-  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2200);
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2400);
 }
 function today() { const d = new Date(); return (d.getMonth() + 1) + '/' + d.getDate(); }
+const find = id => items.find(i => String(i.id) === String(id));
 
 async function api(body) {
+  if (!GAS_URL) throw new Error('config.js にウェブアプリのURLが設定されていません');
   const res = await fetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -97,6 +132,32 @@ async function api(body) {
   const d = await res.json();
   if (!d.ok) throw new Error(d.error || 'エラーが起きました');
   return d;
+}
+
+function memoHtml(i) {
+  if (editing === i.id) {
+    return `<div class="editor">
+      <textarea id="memoInput" maxlength="100" placeholder="例：たつやの小学校の賞状">${esc(draft)}</textarea>
+      <div class="hint">押すと文字が入ります</div>
+      <div class="chips">${CHIPS.map(c => `<button data-chip="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <div class="editBtns">
+        <button class="save" data-save="${i.id}">保存する</button>
+        <button class="cancel" data-cancel="1">やめる</button>
+      </div>
+    </div>`;
+  }
+  if (!i.memo) return `<button class="memoAdd" data-edit="${i.id}">＋ 何の品か、メモを書く</button>`;
+  return `<div class="memoRow"><div class="memo">${esc(i.memo)}</div>
+    <button class="memoBtn" data-edit="${i.id}">直す</button></div>`;
+}
+
+function delHtml(i) {
+  if (confirmDel === i.id) {
+    return `<div class="delBox"><p>この写真を削除しますか？元に戻せません。</p>
+      <div class="delBtns"><button class="delYes" data-del="${i.id}">削除する</button>
+      <button class="cancel" data-cancel="1">やめる</button></div></div>`;
+  }
+  return `<button class="delLink" data-askdel="${i.id}">この写真を削除</button>`;
 }
 
 function render() {
@@ -124,21 +185,66 @@ function render() {
       `<button class="${c.c}${c.wide ? ' wide' : ''}${i.decision === c.v ? ' on' : ''}" data-id="${i.id}" data-v="${c.v}">${c.v}</button>`
     ).join('');
     const decided = i.decision ? `<div class="decided">${esc(i.decidedBy || '')}さんが決定（${esc(i.decidedAt || '')}）</div>` : '';
-    return `<article class="card">
+    return `<article class="card" id="item-${i.id}">
       <img loading="lazy" src="${esc(i.img)}" alt="No.${i.id}">
       <div class="body">
         <div class="meta">No.${i.id}　${esc(i.created)} ${esc(i.by)}さんが登録</div>
-        <div class="memo${i.memo ? '' : ' none'}">${i.memo ? esc(i.memo) : '（メモなし）'}</div>
+        ${memoHtml(i)}
         ${due}
         <div class="choices">${btns}</div>
         ${decided}
+        ${delHtml(i)}
       </div>
     </article>`;
   }).join('');
+
+  const ta = document.getElementById('memoInput');
+  if (ta) {
+    ta.addEventListener('input', () => { draft = ta.value; });
+  }
+}
+
+function openEditor(id, scroll) {
+  const it = find(id);
+  if (!it) return;
+  editing = it.id; draft = it.memo || ''; confirmDel = null;
+  render();
+  const ta = document.getElementById('memoInput');
+  if (scroll) document.getElementById('item-' + it.id).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+async function saveMemo(id) {
+  const it = find(id);
+  if (!it) return;
+  const before = it.memo;
+  it.memo = draft.replace(/\s+/g, ' ').trim().slice(0, 100);
+  editing = null; render();
+  try {
+    await api({ action: 'memo', id: it.id, memo: it.memo });
+    toast(`No.${it.id} のメモを保存しました`);
+  } catch (e) {
+    it.memo = before; render();
+    toast('保存できませんでした：' + e.message);
+  }
+}
+
+async function removeItem(id) {
+  const idx = items.findIndex(i => String(i.id) === String(id));
+  if (idx < 0) return;
+  const [it] = items.splice(idx, 1);
+  confirmDel = null; render();
+  try {
+    await api({ action: 'delete', id: it.id });
+    toast(`No.${it.id} を削除しました`);
+  } catch (e) {
+    items.splice(idx, 0, it); render();
+    toast('削除できませんでした：' + e.message);
+  }
 }
 
 async function decide(id, v) {
-  const it = items.find(i => String(i.id) === String(id));
+  const it = find(id);
   if (!it) return;
   const before = { decision: it.decision, decidedBy: it.decidedBy, decidedAt: it.decidedAt };
   const next = it.decision === v ? '' : v; // 同じボタンをもう一度押すと取り消し
@@ -156,11 +262,23 @@ async function decide(id, v) {
 }
 
 document.addEventListener('click', e => {
-  const b = e.target.closest('.choices button');
-  if (b) { decide(b.dataset.id, b.dataset.v); return; }
-  const t = e.target.closest('.tabs button');
-  if (t) {
-    filter = t.dataset.f; recent.clear();
+  const t = e.target.closest('button');
+  if (!t) return;
+  const ds = t.dataset;
+  if (ds.v) return decide(ds.id, ds.v);
+  if (ds.edit) return openEditor(ds.edit, false);
+  if (ds.save) return saveMemo(ds.save);
+  if (ds.chip) {
+    const ta = document.getElementById('memoInput');
+    draft = (ta ? ta.value : draft) + ds.chip;
+    if (ta) { ta.value = draft; ta.focus(); }
+    return;
+  }
+  if (ds.askdel) { confirmDel = Number(ds.askdel); editing = null; return render(); }
+  if (ds.del) return removeItem(ds.del);
+  if (ds.cancel) { editing = null; confirmDel = null; return render(); }
+  if (ds.f) {
+    filter = ds.f; recent.clear(); editing = null; confirmDel = null;
     document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === t));
     render(); window.scrollTo(0, 0);
   }
@@ -170,11 +288,21 @@ async function main() {
   try {
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
-    fid = new URLSearchParams(location.search).get('f') || '';
-    if (!fid) { const p = liff.getDecodedIDToken(); fid = p ? p.sub : ''; } // 1対1トーク用
+    const q = new URLSearchParams(location.search);
+    fid = q.get('f') || '';
+    if (!fid) { const p = liff.getDecodedIDToken(); fid = p ? p.sub : ''; }
     const d = await api({ action: 'list' });
     items = d.items; me = d.me;
     render();
+    // LINEの「メモを書く」ボタンから開いたときは、その写真のメモ欄を開く
+    const target = q.get('item');
+    if (target && q.get('memo') && find(target)) {
+      if (find(target).decision) {
+        filter = 'all';
+        document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.f === 'all'));
+      }
+      openEditor(target, true);
+    }
   } catch (e) {
     document.getElementById('progress').textContent = '';
     document.getElementById('list').innerHTML = `<p class="msg">うまく開けませんでした。<br>${esc(e.message)}</p>`;
