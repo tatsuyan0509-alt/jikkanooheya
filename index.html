@@ -32,7 +32,7 @@
 
   /* メモ */
   .memoRow { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0 4px; }
-  .memo { flex: 1; font-size: 20px; font-weight: 600; word-break: break-all; }
+  .memo { flex: 1; font-size: 17px; font-weight: 500; word-break: break-all; }
   .memoBtn { flex: none; font-size: 15px; padding: 6px 12px; border-radius: 20px;
     border: 1px solid var(--line); background: #faf8f4; color: var(--ink); }
   .memoAdd { display: block; width: 100%; text-align: left; font-size: 17px; padding: 12px 14px;
@@ -62,6 +62,23 @@
   .toss { color: var(--toss); } .toss.on { background: var(--toss); border-color: var(--toss); }
   .photo { color: var(--photo); } .photo.on { background: var(--photo); border-color: var(--photo); }
   .decided { margin-top: 8px; font-size: 14px; color: var(--sub); }
+
+  .memoTag { font-size: 13px; font-weight: 700; color: var(--sub); margin-right: 8px; }
+  /* AIが書き出した中身 */
+  .ai { margin: 8px 0 6px; background: #faf8f4; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+  .aiHead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .aiLabel { font-size: 13px; font-weight: 700; color: #b5701f; background: #fbe9cf; border-radius: 99px; padding: 2px 10px; }
+  .aiLink { font-size: 14px; padding: 4px 10px; border-radius: 16px; border: 1px solid var(--line); background: #fff; color: var(--ink); }
+  .aiList { list-style: none; margin: 6px 0 0; padding: 0; }
+  .aiList li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 2px; border-bottom: 1px dashed var(--line); font-size: 17px; }
+  .aiList li:last-child { border-bottom: none; }
+  .aiList b { flex: none; font-variant-numeric: tabular-nums; }
+  .aiNote { font-size: 13px; color: var(--sub); margin-top: 4px; }
+  .aiRun { display: block; width: 100%; margin-top: 8px; font-size: 16px; padding: 12px; border-radius: 12px; border: 2px dashed #e3b47a; background: #fff; color: #b5701f; font-weight: 600; }
+  .aiRow { display: grid; grid-template-columns: 1fr 96px 40px; gap: 6px; margin-top: 8px; }
+  .aiRow input { font: inherit; font-size: 17px; padding: 8px 10px; border-radius: 10px; border: 1px solid #bfb8aa; min-width: 0; }
+  .aiRow .x { border-radius: 10px; border: 1px solid var(--line); background: #fff; font-size: 18px; color: var(--sub); }
+  .aiAdd { margin-top: 8px; font-size: 15px; padding: 8px 12px; border-radius: 10px; border: 1px dashed #bfb8aa; background: #fff; color: var(--ink); }
 
   /* 削除 */
   .delLink { display: block; margin: 14px auto 0; background: none; border: none; color: var(--sub);
@@ -109,6 +126,8 @@ const CHIPS = ['賞状', 'アルバム', '服', 'おもちゃ', '本・教科書
 
 let items = [], filter = 'todo', fid = '', me = '';
 let editing = null, draft = '', confirmDel = null;
+let aiEditing = null, aiDraft = [];
+const aiBusy = new Set(); // AIが読み取り中の写真
 const recent = new Set(); // 「まだ決めていない」で、決めた直後のものは消さずに残す
 
 function esc(s) {
@@ -146,9 +165,37 @@ function memoHtml(i) {
       </div>
     </div>`;
   }
-  if (!i.memo) return `<button class="memoAdd" data-edit="${i.id}">＋ 何の品か、メモを書く</button>`;
-  return `<div class="memoRow"><div class="memo">${esc(i.memo)}</div>
+  if (!i.memo) return `<button class="memoAdd" data-edit="${i.id}">＋ ひとことメモを書く</button>`;
+  return `<div class="memoRow"><div class="memo"><span class="memoTag">メモ</span>${esc(i.memo)}</div>
     <button class="memoBtn" data-edit="${i.id}">直す</button></div>`;
+}
+
+function aiHtml(i) {
+  if (aiEditing === i.id) {
+    const rows = aiDraft.map((x, k) => `<div class="aiRow">
+        <input data-ai-name="${k}" value="${esc(x.name)}" placeholder="品名" maxlength="40" aria-label="品名">
+        <input data-ai-qty="${k}" value="${esc(x.qty)}" placeholder="数" maxlength="20" aria-label="数">
+        <button class="x" data-ai-del="${k}" aria-label="この行を消す">×</button></div>`).join('');
+    return `<div class="ai"><div class="aiHead"><span class="aiLabel">中身を直す</span></div>
+      ${rows}
+      <button class="aiAdd" data-ai-add="1">＋ 行を足す</button>
+      <div class="editBtns"><button class="save" data-ai-save="${i.id}">保存する</button><button class="cancel" data-cancel="1">やめる</button></div>
+    </div>`;
+  }
+  if (aiBusy.has(i.id)) return `<div class="ai"><span class="aiLabel">AIが読み取っています…</span></div>`;
+  if (i.aiItems === null || i.aiItems === undefined) {
+    return `<button class="aiRun" data-ai-run="${i.id}">AIで中身と数を書き出す</button>`;
+  }
+  if (!i.aiItems.length) {
+    return `<div class="ai"><div class="aiHead"><span class="aiLabel">AIが書き出した中身</span></div>
+      <p class="aiNote">写真から中身を読み取れませんでした。</p>
+      <div class="aiHead" style="justify-content:flex-start;margin-top:6px"><button class="aiLink" data-ai-run="${i.id}">もう一度読み取る</button><button class="aiLink" data-ai-edit="${i.id}">自分で入力する</button></div></div>`;
+  }
+  return `<div class="ai">
+    <div class="aiHead"><span class="aiLabel">AIが書き出した中身</span><button class="aiLink" data-ai-edit="${i.id}">直す</button></div>
+    <ul class="aiList">${i.aiItems.map(x => `<li><span>${esc(x.name)}</span><b>${esc(x.qty)}</b></li>`).join('')}</ul>
+    <p class="aiNote">数は写真から数えた目安です。</p>
+  </div>`;
 }
 
 function delHtml(i) {
@@ -189,6 +236,7 @@ function render() {
       <img loading="lazy" src="${esc(i.img)}" alt="No.${i.id}">
       <div class="body">
         <div class="meta">No.${i.id}　${esc(i.created)} ${esc(i.by)}さんが登録</div>
+        ${aiHtml(i)}
         ${memoHtml(i)}
         ${due}
         <div class="choices">${btns}</div>
@@ -207,7 +255,7 @@ function render() {
 function openEditor(id, scroll) {
   const it = find(id);
   if (!it) return;
-  editing = it.id; draft = it.memo || ''; confirmDel = null;
+  editing = it.id; draft = it.memo || ''; confirmDel = null; aiEditing = null;
   render();
   const ta = document.getElementById('memoInput');
   if (scroll) document.getElementById('item-' + it.id).scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -226,6 +274,45 @@ async function saveMemo(id) {
   } catch (e) {
     it.memo = before; render();
     toast('保存できませんでした：' + e.message);
+  }
+}
+
+function openAiEditor(id) {
+  const it = find(id);
+  if (!it) return;
+  aiEditing = it.id; editing = null; confirmDel = null;
+  aiDraft = (it.aiItems && it.aiItems.length ? it.aiItems : [{ name: '', qty: '' }]).map(x => ({ name: x.name, qty: x.qty }));
+  render();
+}
+
+async function saveAi(id) {
+  const it = find(id);
+  if (!it) return;
+  const before = it.aiItems;
+  const list = aiDraft.map(x => ({ name: x.name.trim(), qty: x.qty.trim() })).filter(x => x.name);
+  it.aiItems = list; aiEditing = null; render();
+  try {
+    const d = await api({ action: 'aiitems', id: it.id, aiItems: list });
+    it.aiItems = d.aiItems; render();
+    toast(`No.${it.id} の中身を保存しました`);
+  } catch (e) {
+    it.aiItems = before; render();
+    toast('保存できませんでした：' + e.message);
+  }
+}
+
+async function runAi(id) {
+  const it = find(id);
+  if (!it || aiBusy.has(it.id)) return;
+  aiBusy.add(it.id); render();
+  try {
+    const d = await api({ action: 'reanalyze', id: it.id });
+    it.aiItems = d.aiItems;
+    toast(`No.${it.id} の中身を書き出しました`);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    aiBusy.delete(it.id); render();
   }
 }
 
@@ -274,14 +361,26 @@ document.addEventListener('click', e => {
     if (ta) { ta.value = draft; ta.focus(); }
     return;
   }
-  if (ds.askdel) { confirmDel = Number(ds.askdel); editing = null; return render(); }
+  if (ds.aiRun) return runAi(ds.aiRun);
+  if (ds.aiEdit) return openAiEditor(ds.aiEdit);
+  if (ds.aiSave) return saveAi(ds.aiSave);
+  if (ds.aiAdd) { aiDraft.push({ name: '', qty: '' }); render(); const el = document.querySelector(`[data-ai-name="${aiDraft.length - 1}"]`); if (el) el.focus(); return; }
+  if (ds.aiDel !== undefined) { aiDraft.splice(Number(ds.aiDel), 1); if (!aiDraft.length) aiDraft.push({ name: '', qty: '' }); return render(); }
+  if (ds.askdel) { confirmDel = Number(ds.askdel); editing = null; aiEditing = null; return render(); }
   if (ds.del) return removeItem(ds.del);
-  if (ds.cancel) { editing = null; confirmDel = null; return render(); }
+  if (ds.cancel) { editing = null; confirmDel = null; aiEditing = null; return render(); }
   if (ds.f) {
-    filter = ds.f; recent.clear(); editing = null; confirmDel = null;
+    filter = ds.f; recent.clear(); editing = null; confirmDel = null; aiEditing = null;
     document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === t));
     render(); window.scrollTo(0, 0);
   }
+});
+
+// 中身の入力欄（品名・数）の変更を覚えておく
+document.addEventListener('input', e => {
+  const ds = e.target.dataset || {};
+  if (ds.aiName !== undefined && aiDraft[ds.aiName]) aiDraft[ds.aiName].name = e.target.value;
+  if (ds.aiQty !== undefined && aiDraft[ds.aiQty]) aiDraft[ds.aiQty].qty = e.target.value;
 });
 
 async function main() {
